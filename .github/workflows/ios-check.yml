@@ -1,0 +1,20 @@
+name: Check the iPad app builds
+on:
+  push:
+    paths: ['ios/**', '.github/workflows/ios-check.yml']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - run: >
+          xcodebuild -project ios/PianoLetters.xcodeproj -target PianoLetters -configuration Debug
+          -sdk iphonesimulator CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/build" build
+      - name: The app contains the page and all scores
+        run: |
+          APP=$(find build -name PianoLetters.app -type d | head -1)
+          test -f "$APP/index.html" && test -f "$APP/version.json"
+          test "$(ls "$APP/data" | wc -l)" -eq "$(ls data | wc -l)"
+          plutil -p "$APP/Info.plist"

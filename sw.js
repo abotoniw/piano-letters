@@ -1,5 +1,5 @@
 /* Offline copy of the app. The version changes with every build, which is how an update is noticed. */
-const V = '2026-11-22-d96e73', DV = 'db2f44a7a4', SHELL = 'pls-shell-' + V, DATA = 'pls-data';
+const V = '2026-11-22-12de7a', DV = 'db2f44a7a4', SHELL = 'pls-shell-' + V, DATA = 'pls-data';
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => e.waitUntil(caches.open(SHELL).then(c => c.addAll(CORE.map(u => new Request(u, { cache: 'reload' }))))));
 self.addEventListener('activate', e => e.waitUntil((async () => {

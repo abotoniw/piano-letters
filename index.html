@@ -2309,7 +2309,11 @@ const CATALOG = [
 
 /* iPad player: library, live sheet, playback, piano keys. Works offline. */
 (() => {
-  const $ = id => document.getElementById(id), VERSION = '2026-11-22-d96e73', DATA_N = 37;
+  const $ = id => document.getElementById(id), VERSION = '2026-11-22-12de7a', DATA_N = 37;
+  /* Inside the Xcode app the page talks to the native side; elsewhere this is off. */
+  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.native, NATIVE = !!bridge, waiting = {}; let callId = 0;
+  const native = (cmd, arg) => new Promise(res => { const id = ++callId; waiting[id] = res; bridge.postMessage({ id, cmd, arg: arg === undefined ? null : arg }); });
+  window.__plReply = (id, v) => { const f = waiting[id]; delete waiting[id]; if (f) f(v); };
   const LS = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* full or private */ } } };
   let tT; const toast = s => { const el = $('toast'); el.textContent = s; el.hidden = false; clearTimeout(tT); tT = setTimeout(() => { el.hidden = true; }, 3500); };
   const opt = Object.assign({ level: 'full', key: 'easy', fs: 8, fingers: true, kb: true, follow: true, count: true, dark: false, sound: 'both', met: false }, LS.get('opt', {}));
@@ -2340,7 +2344,7 @@ const CATALOG = [
   const say = r => (r.added || r.upd ? [r.added && r.added + ' added', r.upd && r.upd + ' updated'].filter(Boolean).join(', ') : 'Nothing new') + (r.bad ? ', ' + r.bad + ' could not be read' : '') + '.';
   async function removeSheet(id) { const s = sheets.find(x => x.id === id), g = LS.get('gone', {}); g[id] = s ? s.updated || '1' : '1'; LS.set('gone', g); try { await tx('readwrite', st => st.delete(id)); } catch (e) { LS.set('sheets', LS.get('sheets', []).filter(x => x.id !== id)); } await loadSheets(); draw(); }
   $('file').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { const r = await addSheets(JSON.parse(await f.text()), 'file'); tab = 'mine'; $('dAdd').close(); draw(); toast(say(r)); } catch (x) { toast(x instanceof SyntaxError ? 'This file could not be read.' : x.message); } });
-  $('paste').onclick = async () => { try { const t = await navigator.clipboard.readText(); const r = await addSheets(JSON.parse(t), 'paste'); tab = 'mine'; $('dAdd').close(); draw(); toast(say(r)); } catch (x) { toast('Nothing to paste. Use Copy for iPad in the web page first.'); } };
+  $('paste').onclick = async () => { try { const t = NATIVE ? await native('paste') : await navigator.clipboard.readText(); const r = await addSheets(JSON.parse(t), 'paste'); tab = 'mine'; $('dAdd').close(); draw(); toast(say(r)); } catch (x) { toast('Nothing to paste. Use Copy for iPad in the web page first.'); } };
 
   /* ---------- library ---------- */
   const TABS = [['mine', 'My sheets'], ['songs', 'Songs'], ['scores', 'Composers'], ['fav', 'Favorites'], ['recent', 'Recent']];
@@ -2384,7 +2388,7 @@ const CATALOG = [
     let p, note = '';
     try {
       if (it.k.startsWith('lib:')) { p = parseABC(it.x.abc); p.title = it.x.title; p.composer = it.x.by; autoChords(p); if (!it.x.ok) note = 'Not yet checked against a score.'; }
-      else if (it.k.startsWith('cat:')) { p = unpackPiece((await bundle(it.x.f))[it.x.n], it.x); if (p.measures.length !== it.x.bars) { delete bundles[it.x.f]; await caches.delete('pls-data'); throw new Error('old scores'); } note = CREDITS[it.x.c] + (it.x.v ? '' : ' Hands and bar lines were worked out automatically.'); }
+      else if (it.k.startsWith('cat:')) { p = unpackPiece((await bundle(it.x.f))[it.x.n], it.x); if (p.measures.length !== it.x.bars) { delete bundles[it.x.f]; if (window.caches) await caches.delete('pls-data'); throw new Error('old scores'); } note = CREDITS[it.x.c] + (it.x.v ? '' : ' Hands and bar lines were worked out automatically.'); }
       else { p = readSheet(it.x); note = p.sourceNote || ''; if (!p.verified) note += ' Not yet checked.'; }
     } catch (e) { toast(navigator.onLine === false ? 'This score is not on the iPad yet. Connect to the internet once, then use Download all.' : 'This piece could not be opened.'); return; }
     const pp = LS.get('pp', {})[it.k] || {};
@@ -2536,35 +2540,41 @@ const CATALOG = [
   document.querySelectorAll('dialog').forEach(d => d.addEventListener('click', e => { if (e.target === d) d.close(); }));
 
   /* ---------- keep the screen on ---------- */
-  let wl = null; async function wake() { try { if (navigator.wakeLock && !wl) { wl = await navigator.wakeLock.request('screen'); wl.addEventListener('release', () => { wl = null; }); } } catch (e) { wl = null; } }
-  function release() { if (wl) { wl.release().catch(() => {}); wl = null; } }
+  let wl = null; async function wake() { if (NATIVE) { native('awake', true); return; } try { if (navigator.wakeLock && !wl) { wl = await navigator.wakeLock.request('screen'); wl.addEventListener('release', () => { wl = null; }); } } catch (e) { wl = null; } }
+  function release() { if (NATIVE) { native('awake', false); return; } if (wl) { wl.release().catch(() => {}); wl = null; } }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { if (cur) wake(); check(false); } else if (playing) stop(); });
 
   /* ---------- offline and updates ---------- */
   let reg = null, asked = false;
   $('addBtn').onclick = () => { $('dAdd').showModal(); $('verTxt').textContent = 'Version ' + VERSION; offline(); };
-  async function offline() { try { const c = await caches.open('pls-data'); const n = (await c.keys()).length; $('offTxt').textContent = n >= DATA_N ? 'All scores are on this iPad' : n + ' of ' + DATA_N + ' score files are on this iPad'; $('off').hidden = n >= DATA_N; return n; } catch (e) { $('off').hidden = true; return 0; } }
+  async function offline() { if (NATIVE) { $('offTxt').textContent = 'All scores are on this iPad'; $('off').hidden = true; return DATA_N; } try { const c = await caches.open('pls-data'); const n = (await c.keys()).length; $('offTxt').textContent = n >= DATA_N ? 'All scores are on this iPad' : n + ' of ' + DATA_N + ' score files are on this iPad'; $('off').hidden = n >= DATA_N; return n; } catch (e) { $('off').hidden = true; return 0; } }
   async function fetchAll(show) { for (let i = 1; i <= DATA_N; i++) { const f = 'b' + String(i).padStart(3, '0'); try { const r = await fetch('data/' + f + '.json'); await r.arrayBuffer(); } catch (e) { if (show) toast('Stopped. Check the internet connection.'); break; } if (show) $('offTxt').textContent = i + ' of ' + DATA_N + ' score files'; } offline(); }
   $('off').onclick = () => fetchAll(true);
   function offerUpdate() { if (asked) return; asked = true; $('upd').textContent = 'Install update'; $('addBtn').textContent = 'Update ready'; $('addBtn').classList.add('main'); }
+  let lastCheck = 0;
   async function check(show) {
-    await pull(show); if (!reg) { if (show) toast('Updates work in the installed app.'); return; }
+    if (!show && Date.now() - lastCheck < 60000) return; lastCheck = Date.now();
+    await pull(show);
+    if (NATIVE) { const r = await native('check'); if (r === 'new') { offerUpdate(); if (show) toast('An update is ready. Tap Install update.'); } else if (show) toast(r === 'same' ? 'This is the newest version.' : r === 'old' ? 'The update is not complete on the website yet. Try again in a few minutes.' : 'No connection.'); return; }
+    if (!reg) { if (show) toast('Updates work in the installed app.'); return; }
     if (reg.waiting) { offerUpdate(); return; }
     try { await reg.update(); } catch (e) { if (show) toast('No connection.'); return; }
     const w = reg.installing; if (w) { w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) { offerUpdate(); if (show) toast('An update is ready. Tap Install update.'); } }); if (show) toast('Downloading an update…'); } else if (show) toast('This is the newest version.');
   }
-  $('upd').onclick = () => { if (reg && reg.waiting) reg.waiting.postMessage('go'); else check(true); };
+  $('upd').onclick = () => { if (NATIVE && asked) native('install'); else if (reg && reg.waiting) reg.waiting.postMessage('go'); else check(true); };
   async function pull(show) { // sheets published in the repository as my-sheets.json
-    try { const r = await fetch('my-sheets.json?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return; const x = await addSheets(await r.json(), 'repo'); if (x.added || x.upd) toast('My sheets: ' + say(x)); } catch (e) { /* none, or offline */ }
+    try { let o; if (NATIVE) { const t = await native('sheets'); if (!t) return; o = JSON.parse(t); } else { const r = await fetch('my-sheets.json?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return; o = await r.json(); } const x = await addSheets(o, 'repo'); if (x.added || x.upd) toast('My sheets: ' + say(x)); } catch (e) { /* none, or offline */ }
   }
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  if (NATIVE) setTimeout(() => check(false), 2500);
+  else if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     let first = !navigator.serviceWorker.controller;
     navigator.serviceWorker.register('sw.js').then(r => { reg = r; if (r.waiting && !first) offerUpdate(); r.addEventListener('updatefound', () => { const w = r.installing; w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(); }); }); navigator.serviceWorker.ready.then(() => setTimeout(() => fetchAll(false), 2500)); }).catch(() => {});
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (first) { first = false; return; } location.reload(); });
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-  dark(); loadSheets().then(() => { if (!LS.get('tab', null) && sheets.length) tab = 'mine'; draw(); pull(false); });
+  dark(); loadSheets().then(() => { if (!LS.get('tab', null) && sheets.length) tab = 'mine'; draw(); if (NATIVE) native('ready'); else pull(false); });
+  window.__plImport = async t => { try { const r = await addSheets(JSON.parse(t), 'file'); tab = 'mine'; $('q').value = ''; if (cur) $('back').click(); else draw(); toast(say(r)); } catch (x) { toast(x instanceof SyntaxError ? 'This file could not be read.' : x.message); } };
   window.__pl = { opt, get cur() { return cur; }, addSheets, openItem, byKey, get playing() { return playing; } };
 })();
 
